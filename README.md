@@ -56,8 +56,14 @@ off-machine backup of your history.
 ## Quick start
 
 ```bash
-curl -fsSL https://github.com/ericmoret/active-time/archive/refs/heads/master.tar.gz | tar xz && cd active-time-master && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/ericmoret/active-time/master/install.sh | bash
 ```
+
+(Piping a script straight into `bash` means running code you haven't looked
+at first. Worth a quick read of
+[`install.sh`](https://github.com/ericmoret/active-time/blob/master/install.sh)
+before you do, or download-then-run instead:
+`curl -fsSL https://raw.githubusercontent.com/ericmoret/active-time/master/install.sh -o install.sh && less install.sh && bash install.sh`.)
 
 The installer:
 
