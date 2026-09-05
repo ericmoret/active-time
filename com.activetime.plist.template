@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.activetime.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PYTHON@</string>
+        <string>@SCRIPT@</string>
+        <string>--csv</string>
+        <string>@CSV@</string>
+@SHEET_ARGS@
+        <string>--office-days</string>
+        <string>@OFFICE_DAYS@</string>
+        <string>--office-start</string>
+        <string>@OFFICE_START@</string>
+        <string>--office-end</string>
+        <string>@OFFICE_END@</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@DATA_DIR@</string>
+
+    <!-- Every day at 08:00. If the Mac is asleep/off at that moment, launchd
+         runs the missed job as soon as the machine is next awake. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>@LOG@</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG@</string>
+</dict>
+</plist>

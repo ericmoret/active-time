@@ -1,0 +1,10 @@
+# Personal tracked data - not for the repo
+active_time.csv
+pmset.log
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
