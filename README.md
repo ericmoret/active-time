@@ -6,11 +6,11 @@ I was handed a laptop dedicated to one consulting gig, billed by the hour.
 Which meant timesheets — and timers you forget to start, forget to stop, or
 just fudge at the end of the week.
 
-Then it clicked: since the machine touches nothing but this work, *any*
-time I'm interacting with it *is* billable time. macOS is already logging
-every keystroke and trackpad touch to decide when to dim the screen. So
-rather than tracking my time, I let the laptop do it — pull that log,
-turn it into sessions, push it to a spreadsheet. That's this project.
+Since that machine touches nothing but this one gig, though, any time I'm
+interacting with it *is* billable time. And macOS is already logging every
+keystroke and trackpad touch, just to decide when to dim the screen. So
+instead of tracking my time by hand, I let the laptop do it — pull that
+log, turn it into sessions, push it to a spreadsheet. That's this project.
 
 ## What it does
 
@@ -56,9 +56,12 @@ off-machine backup of your history.
 ## Quick start
 
 ```bash
-git clone <this repo> && cd active-time
-./install.sh
+gh repo clone ericmoret/active-time && cd active-time && ./install.sh
 ```
+
+(Needs the [GitHub CLI](https://cli.github.com/), `gh auth login`'d — this
+repo is private, so a plain `git clone` needs your own GitHub credentials
+set up anyway; `gh` just skips typing the URL.)
 
 The installer:
 
