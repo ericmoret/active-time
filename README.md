@@ -56,12 +56,8 @@ off-machine backup of your history.
 ## Quick start
 
 ```bash
-gh repo clone ericmoret/active-time && cd active-time && ./install.sh
+curl -fsSL https://github.com/ericmoret/active-time/archive/refs/heads/master.tar.gz | tar xz && cd active-time-master && ./install.sh
 ```
-
-(Needs the [GitHub CLI](https://cli.github.com/), `gh auth login`'d — this
-repo is private, so a plain `git clone` needs your own GitHub credentials
-set up anyway; `gh` just skips typing the URL.)
 
 The installer:
 
