@@ -11,7 +11,24 @@
 # Safe to re-run: re-installs the script/plist and reloads the job.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_RAW_BASE="https://raw.githubusercontent.com/ericmoret/active-time/master"
+
+# Normal case: run from a real checkout (cloned or tarball-extracted), with
+# active_time.py/lib.sh/com.activetime.plist.template sitting right next to
+# this script. But `curl -fsSL .../install.sh | bash` streams only this
+# file's content into bash - there's no on-disk sibling directory at all in
+# that case - so fall back to fetching those three files into a scratch
+# directory instead, and use that as SCRIPT_DIR.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || pwd)"
+
+if [ ! -f "$SCRIPT_DIR/lib.sh" ]; then
+    SCRIPT_DIR="$(mktemp -d)"
+    trap 'rm -rf "$SCRIPT_DIR"' EXIT
+    for f in active_time.py lib.sh com.activetime.plist.template; do
+        curl -fsSL "$REPO_RAW_BASE/$f" -o "$SCRIPT_DIR/$f"
+    done
+fi
+
 source "$SCRIPT_DIR/lib.sh"
 
 echo "== active_time.py installer =="
