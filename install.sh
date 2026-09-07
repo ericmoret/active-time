@@ -20,6 +20,18 @@ source "$SCRIPT_DIR/lib.sh"
 echo "== active_time.py installer =="
 echo
 
+# Defaults if this is a first install, or the existing plist doesn't have
+# a given value; read_existing_plist_config below overrides whichever of
+# these an already-installed plist actually has, so re-running to change
+# one setting doesn't silently reset every other one.
+EXISTING_SHEET_ENABLED=0
+EXISTING_SHEET_ID=""
+EXISTING_SHEET_TAB="CSV"
+EXISTING_OFFICE_DAYS="Tue,Wed,Thu"
+EXISTING_OFFICE_START="9:00"
+EXISTING_OFFICE_END="18:00"
+read_existing_plist_config
+
 # ---------------------------------------------------------------------------
 # 1. Directories
 # ---------------------------------------------------------------------------
@@ -54,8 +66,29 @@ echo
 # 3. Google Sheet sync - optional
 # ---------------------------------------------------------------------------
 SHEET_ARGS=()
+RECONFIGURE_SHEET=0
 
-if confirm "Set up Google Sheet sync now? (requires a Google Cloud service account - see README)"; then
+if [ "$EXISTING_SHEET_ENABLED" = "1" ]; then
+    echo "Google Sheet sync is currently configured:"
+    echo "  Sheet ID: $EXISTING_SHEET_ID"
+    echo "  Tab:      $EXISTING_SHEET_TAB"
+    if confirm "Keep it as-is?" "Y"; then
+        SHEET_ID="$EXISTING_SHEET_ID"
+        SHEET_TAB="$EXISTING_SHEET_TAB"
+        SHEET_ARGS=(--push-sheet --sheet-id "$SHEET_ID" --sheet-tab "$SHEET_TAB")
+        echo "Keeping existing Sheet sync configuration and Keychain credential."
+    elif confirm "Reconfigure Google Sheet sync instead of disabling it?"; then
+        RECONFIGURE_SHEET=1
+    else
+        echo "Google Sheet sync disabled - local CSV only. Re-run this installer anytime to re-enable it."
+    fi
+elif confirm "Set up Google Sheet sync now? (requires a Google Cloud service account - see README)"; then
+    RECONFIGURE_SHEET=1
+else
+    echo "Skipping Google Sheet sync - local CSV only. Re-run this installer anytime to add it."
+fi
+
+if [ "$RECONFIGURE_SHEET" = "1" ]; then
     echo "Installing gspread/google-auth (for Google Sheets sync)..."
     "$PYTHON_BIN" -m pip install --user --quiet gspread google-auth
     echo "Done."
@@ -91,23 +124,25 @@ print(json.load(open(sys.argv[1]))['client_email'])
     fi
     echo
 
-    read -r -p "Google Sheet ID to sync with (required): " SHEET_ID
+    if [ -n "$EXISTING_SHEET_ID" ]; then
+        prompt_default SHEET_ID "Google Sheet ID to sync with" "$EXISTING_SHEET_ID"
+    else
+        read -r -p "Google Sheet ID to sync with (required): " SHEET_ID
+    fi
     while [ -z "$SHEET_ID" ]; do
         read -r -p "Sheet ID can't be empty - Google Sheet ID to sync with: " SHEET_ID
     done
-    prompt_default SHEET_TAB "Worksheet/tab name" "CSV"
+    prompt_default SHEET_TAB "Worksheet/tab name" "$EXISTING_SHEET_TAB"
     SHEET_ARGS=(--push-sheet --sheet-id "$SHEET_ID" --sheet-tab "$SHEET_TAB")
-else
-    echo "Skipping Google Sheet sync - local CSV only. Re-run this installer anytime to add it."
 fi
 echo
 
 # ---------------------------------------------------------------------------
 # 4. Office days/hours
 # ---------------------------------------------------------------------------
-prompt_default OFFICE_DAYS "Days considered office days (comma-separated, e.g. Tue,Wed,Thu)" "Tue,Wed,Thu"
-prompt_default OFFICE_START "Office hours start time" "9:00"
-prompt_default OFFICE_END "Office hours end time" "18:00"
+prompt_default OFFICE_DAYS "Days considered office days (comma-separated, e.g. Tue,Wed,Thu)" "$EXISTING_OFFICE_DAYS"
+prompt_default OFFICE_START "Office hours start time" "$EXISTING_OFFICE_START"
+prompt_default OFFICE_END "Office hours end time" "$EXISTING_OFFICE_END"
 
 if ! OFFICE_DAYS="$OFFICE_DAYS" OFFICE_START="$OFFICE_START" OFFICE_END="$OFFICE_END" BIN_DIR="$BIN_DIR" "$PYTHON_BIN" <<'PYEOF'
 import os, sys

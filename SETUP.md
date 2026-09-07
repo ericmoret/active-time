@@ -147,6 +147,12 @@ tail -f ~/Library/Logs/ActiveTime/active_time.log
 
 macOS logs a `UserIsActive` power-management assertion whenever real HID input (keyboard, trackpad, lid) occurs, under several different actions — `Created`, `TurnedOn`, `Summary` (a periodic heartbeat on a still-open assertion), and `TimedOut`. `active_time.py` treats every one of these as a timestamped "activity pulse," rather than only tracking `Created`/`TimedOut` pairs by assertion ID — the latter approach misses real, continuous activity whenever a brief sleep/wake blip (a few seconds of `Idle Sleep` immediately followed by a `DarkWake`) intervenes, since the OS can log that blip mid-assertion without a fresh `Created` event afterward. Pulses within the inactivity gap of each other are merged into a single session.
 
+## Office days and hours
+
+Office days/hours (default `Tue,Wed,Thu`, `9:00`-`18:00`; set via `--office-days`/`--office-start`/`--office-end`, or the Installing prompts) define a window used two ways: sessions overlapping it are labeled `[Office]` in the printed output, and consecutive sessions on the same day that both overlap it are merged into a single span — even across a real gap between them, like a lunch break. That merge changes the actual start/end times saved to the CSV/Sheet, not just how they're printed; the `[Office]` label itself is console-only and isn't stored in the CSV/Sheet.
+
+Example, with the default `Tue,Wed,Thu` `9:00`-`18:00` window, on a Wednesday: a session from 9:00 AM-10:30 AM, then a 30-minute gap for an in-person one-on-one meeting with no laptop activity, then another session from 11:00 AM-3:00 PM, then a separate session from 7:00 PM-9:00 PM working from home. The two daytime sessions both overlap office hours, so they're merged and saved as one 9:00 AM-3:00 PM span, even though there was no actual activity during the meeting. The evening session starts after office hours end, so it doesn't overlap the window and is saved separately, unmerged.
+
 ## License
 
 [MIT](LICENSE).
