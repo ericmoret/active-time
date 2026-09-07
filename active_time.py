@@ -249,20 +249,61 @@ KEYCHAIN_SERVICE = "ActiveTimeServiceAccount"
 SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
+def _normalize_date(value):
+    """Coerce a date value into canonical ISO 'YYYY-MM-DD'. Rows read back
+    from the Sheet should already be ISO (that's what USER_ENTERED settles
+    on for cells written that way), but this stays defensive in case a
+    locale/format setting ever renders it differently."""
+    s = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return s
+
+
+def _normalize_time(value):
+    """Coerce a time value into canonical 24-hour zero-padded 'HH:MM'.
+
+    Rows we write ourselves are always already in this form. But rows read
+    back from the Sheet via ws.get_all_records() come back as Sheets' own
+    *formatted display* string for that cell - and since sync_with_sheet
+    writes with value_input_option=USER_ENTERED, start_time/end_time land
+    as real time-of-day values, which Sheets displays without a leading
+    zero (e.g. "8:33", not "08:33"). Comparing that raw string against our
+    "08:33" would treat the same real session as two different rows on
+    every subsequent sync. strptime's %H is lenient about the missing
+    digit, so re-parsing and re-formatting here normalizes both forms to
+    the same key before rows are deduped.
+    """
+    s = str(value).strip()
+    for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M:%S %p"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%H:%M")
+        except ValueError:
+            continue
+    return s
+
+
 def dedupe_sort_rows(rows):
     """Dedupe a list of row dicts (date/start_time/end_time) and sort
     chronologically. Callers combine rows from multiple sources (the
     existing local CSV, an existing Google Sheet, this run's freshly
     computed sessions) with `+` before calling this.
 
-    date/start_time/end_time are kept in sortable form (ISO date, 24-hour
-    time) specifically so rows from those different sources can be merged
-    this way without ambiguity.
+    date/start_time/end_time are normalized to sortable canonical form
+    (ISO date, zero-padded 24-hour time) so rows from those different
+    sources - including a Sheet's own re-formatted read-back - can be
+    merged this way without ambiguity.
     """
     combined = {}
     for row in rows:
-        key = (str(row["date"]), str(row["start_time"]), str(row["end_time"]))
-        combined[key] = {field: str(row[field]) for field in CSV_FIELDS}
+        date = _normalize_date(row["date"])
+        start = _normalize_time(row["start_time"])
+        end = _normalize_time(row["end_time"])
+        key = (date, start, end)
+        combined[key] = {"date": date, "start_time": start, "end_time": end}
     return sorted(combined.values(), key=lambda r: (r["date"], r["start_time"]))
 
 
@@ -359,11 +400,12 @@ def sync_with_sheet(csv_path, sheet_id, tab_name, new_rows):
 
     write_csv_rows(csv_path, all_rows)
 
-    # No clear() first: all_rows is a union of what's already on the sheet
-    # plus new rows, so it can only grow or stay the same - update()
-    # overwriting from A1 covers every existing row. (--reset clears
-    # explicitly when you actually want to start over.)
-    #
+    # clear() first: all_rows can be *smaller* than what's currently on the
+    # sheet - e.g. deduping collapses old format-mismatched duplicate rows -
+    # so update() overwriting from A1 alone can leave stale rows sitting
+    # below the new, shorter block. (Previously this skipped clear() on the
+    # assumption row count only ever grows; that assumption was wrong.)
+    ws.clear()
     # USER_ENTERED (rather than gspread's default RAW) makes Sheets parse
     # these the way it would if you'd typed them into a cell - so the date
     # column becomes a real date value and the time columns become real

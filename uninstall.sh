@@ -4,6 +4,8 @@
 # untouched unless you explicitly say to remove the local CSV copy too.
 set -euo pipefail
 
+# Run from a real checkout (cloned or tarball-extracted), with lib.sh
+# sitting right next to this script.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
