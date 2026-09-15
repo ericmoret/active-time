@@ -16,10 +16,11 @@ Defaults to Tue-Thu, 9 AM-6 PM; override with --office-days/--office-start
 --office-end 5pm).
 
 The CSV output is merged, not overwritten: each run reads whatever is
-already at --csv, adds this run's sessions, drops exact duplicates, and
-rewrites the file sorted by date/start_time. This makes it safe to run
-repeatedly (e.g. via a scheduled launchd job) against a pmset log whose
-window overlaps a previous run.
+already at --csv, adds this run's sessions, collapses any overlapping or
+duplicate sessions into one, and rewrites the file sorted by
+date/start_time. This makes it safe to run repeatedly (e.g. via a
+scheduled launchd job) against a pmset log whose window overlaps a
+previous run.
 
 To capture a fresh log:
     pmset -g log > pmset.log
@@ -286,25 +287,66 @@ def _normalize_time(value):
     return s
 
 
+def _row_interval(row):
+    """Reconstruct a sortable (start, end) datetime pair from a normalized
+    row, using the date field as the calendar day of start_time and adding
+    a day to end_time whenever it is <= start_time - the same
+    date+start_time/end_time convention used to write these rows in the
+    first place (e.g. date=2026-08-30, start=22:37, end=00:42 means the
+    session ran into the early hours of 2026-08-31)."""
+    base = datetime.strptime(row["date"], "%Y-%m-%d")
+    sh, sm = (int(p) for p in row["start_time"].split(":"))
+    eh, em = (int(p) for p in row["end_time"].split(":"))
+    start = base + timedelta(hours=sh, minutes=sm)
+    end = base + timedelta(hours=eh, minutes=em)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
 def dedupe_sort_rows(rows):
-    """Dedupe a list of row dicts (date/start_time/end_time) and sort
-    chronologically. Callers combine rows from multiple sources (the
+    """Merge overlapping/duplicate row dicts (date/start_time/end_time) and
+    sort chronologically. Callers combine rows from multiple sources (the
     existing local CSV, an existing Google Sheet, this run's freshly
     computed sessions) with `+` before calling this.
 
     date/start_time/end_time are normalized to sortable canonical form
     (ISO date, zero-padded 24-hour time) so rows from those different
     sources - including a Sheet's own re-formatted read-back - can be
-    merged this way without ambiguity.
+    compared without ambiguity.
+
+    Rows from different runs can describe overlapping spans of the same
+    real activity rather than exact duplicates - e.g. a run against a
+    shorter pmset log window computes a session that ends earlier than a
+    later run's fuller log finds for the same stretch of activity. An
+    exact-tuple dedupe left both rows sitting in the CSV/Sheet forever, so
+    instead overlapping or touching intervals are collapsed into one,
+    keeping the earliest start and latest end - the same way a single
+    run's own sessions are merged.
     """
-    combined = {}
-    for row in rows:
-        date = _normalize_date(row["date"])
-        start = _normalize_time(row["start_time"])
-        end = _normalize_time(row["end_time"])
-        key = (date, start, end)
-        combined[key] = {"date": date, "start_time": start, "end_time": end}
-    return sorted(combined.values(), key=lambda r: (r["date"], r["start_time"]))
+    normalized = [{
+        "date": _normalize_date(row["date"]),
+        "start_time": _normalize_time(row["start_time"]),
+        "end_time": _normalize_time(row["end_time"]),
+    } for row in rows]
+
+    intervals = []
+    for row in normalized:
+        start, end = _row_interval(row)
+        intervals.append([start, end, row["date"]])
+    intervals.sort(key=lambda iv: (iv[0], iv[1]))
+
+    merged = []
+    for start, end, date in intervals:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end, date])
+
+    return [
+        {"date": date, "start_time": start.strftime("%H:%M"), "end_time": end.strftime("%H:%M")}
+        for start, end, date in merged
+    ]
 
 
 def read_csv_rows(csv_path):
