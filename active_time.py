@@ -10,11 +10,6 @@ Usage:
 The inactivity gap defaults to 20 minutes. A pause longer than that is treated
 as a session break. Override with --gap.
 
-Sessions overlapping office hours are labeled [Office] in the output.
-Defaults to Tue-Thu, 9 AM-6 PM; override with --office-days/--office-start
-/--office-end (e.g. --office-days Mon,Tue,Wed,Thu,Fri --office-start 8am
---office-end 5pm).
-
 The CSV output is merged, not overwritten: each run reads whatever is
 already at --csv, adds this run's sessions, collapses any overlapping or
 duplicate sessions into one, and rewrites the file sorted by
@@ -39,8 +34,7 @@ import sys
 import argparse
 import subprocess
 import csv
-from dataclasses import dataclass
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 
 
 # ---------------------------------------------------------------------------
@@ -253,110 +247,31 @@ def merge_intervals(intervals, gap):
 
 
 # ---------------------------------------------------------------------------
-# Office hours detection
+# Day grouping
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class OfficeConfig:
-    """Built once in main() from --office-days/--office-start/--office-end
-    /--day-start and threaded explicitly into business_date(),
-    session_location() and merge_office_sessions() below."""
-    days: set        # weekday ints, Monday=0 (see WEEKDAY_ABBR)
-    start: time
-    end: time
-    day_start: time  # see business_date()
-
-
-WEEKDAY_ABBR = {
-    "mon": 0, "monday": 0,
-    "tue": 1, "tues": 1, "tuesday": 1,
-    "wed": 2, "weds": 2, "wednesday": 2,
-    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
-    "fri": 4, "friday": 4,
-    "sat": 5, "saturday": 5,
-    "sun": 6, "sunday": 6,
-}
-
-
-def parse_office_days(spec):
-    """Parse a comma-separated weekday list like 'Tue,Wed,Thu' into the
-    {0..6} (Monday=0) weekday-index set session_location() expects."""
-    days = set()
-    for part in spec.split(","):
-        key = part.strip().lower()
-        if not key:
-            continue
-        if key not in WEEKDAY_ABBR:
-            raise ValueError(f"unrecognized weekday '{part.strip()}' (use Mon/Tue/Wed/.../Sun)")
-        days.add(WEEKDAY_ABBR[key])
-    return days
-
-
-def business_date(dt, cfg):
+def business_date(dt, day_start):
     """Which calendar day a timestamp belongs to for grouping/reporting,
-    given a day boundary at cfg.day_start (default 3 AM, overridable via
+    given a day boundary at day_start (default 3 AM, overridable via
     --day-start) rather than midnight - so work spanning past midnight (e.g.
     9 PM-2 AM) stays grouped with the evening it started, instead of
     splitting into a new day right after midnight.
     """
     local = dt.astimezone()
-    if local.time() < cfg.day_start:
+    if local.time() < day_start:
         local -= timedelta(days=1)
     return local.date()
 
 
 def parse_time_of_day(spec):
-    """Parse a time-of-day like '9:00', '09:00', '9am', or '9:00 AM'."""
+    """Parse a time-of-day like '3:00', '03:00', '3am', or '3:00 AM'."""
     spec = spec.strip().upper()
     for fmt in ("%H:%M", "%I:%M%p", "%I:%M %p", "%I%p", "%I %p"):
         try:
             return datetime.strptime(spec, fmt).time()
         except ValueError:
             continue
-    raise ValueError(f"unrecognized time '{spec}' (use e.g. 9:00, 09:00, or 9am)")
-
-
-def session_location(start_dt, end_dt, cfg):
-    """Return 'Office' if the session overlaps office hours (cfg.days/
-    cfg.start/cfg.end - configurable via --office-days/--office-start
-    /--office-end, default Tue-Thu 9 AM-6 PM), else ''.
-
-    A session is Office if it starts before office-end and ends after
-    office-start.
-    """
-    local_start = start_dt.astimezone()
-    local_end   = end_dt.astimezone()
-
-    if local_start.weekday() not in cfg.days:
-        return ""
-
-    day = local_start.date()
-    office_start = datetime.combine(day, cfg.start).astimezone()
-    office_end   = datetime.combine(day, cfg.end).astimezone()
-
-    if local_start < office_end and local_end > office_start:
-        return "Office"
-    return ""
-
-
-def merge_office_sessions(sessions, cfg):
-    """Collapse consecutive Office-labeled sessions on the same (business)
-    day into one span.
-
-    Returns (start, end, is_office) triples rather than plain (start, end)
-    pairs, so callers (the by-date grouping and the print loop in main())
-    can reuse is_office instead of each calling session_location() again for
-    the same session.
-    """
-    result = []
-    for start, end in sessions:
-        is_office = session_location(start, end, cfg) == "Office"
-        if (result and result[-1][2] and is_office
-                and business_date(start, cfg) == business_date(result[-1][0], cfg)):
-            result[-1] = (result[-1][0], max(result[-1][1], end), True)
-        else:
-            result.append((start, end, is_office))
-    return result
+    raise ValueError(f"unrecognized time '{spec}' (use e.g. 3:00, 03:00, or 3am)")
 
 
 # ---------------------------------------------------------------------------
@@ -657,12 +572,6 @@ def main():
                              "without processing any log. Irreversible.")
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Skip the confirmation prompt for --reset")
-    parser.add_argument("--office-days", default="Tue,Wed,Thu",
-                        help="Comma-separated weekdays counted as office days (default: Tue,Wed,Thu)")
-    parser.add_argument("--office-start", default="9:00",
-                        help="Office hours start time, e.g. 9:00 or 9am (default: 9:00)")
-    parser.add_argument("--office-end", default="18:00",
-                        help="Office hours end time, e.g. 18:00 or 6pm (default: 18:00)")
     parser.add_argument("--unified-log", metavar="FILE", default=None,
                         help="Read WindowServer input events from a saved `log show` "
                              "output file instead of querying the system log")
@@ -680,12 +589,7 @@ def main():
         parser.error("--sheet-id is required when --push-sheet is set")
 
     try:
-        cfg = OfficeConfig(
-            days=parse_office_days(args.office_days),
-            start=parse_time_of_day(args.office_start),
-            end=parse_time_of_day(args.office_end),
-            day_start=parse_time_of_day(args.day_start),
-        )
+        day_start = parse_time_of_day(args.day_start)
     except ValueError as e:
         parser.error(str(e))
 
@@ -744,12 +648,11 @@ def main():
     min_duration = timedelta(minutes=args.min_duration)
     sessions = merge_intervals(intervals, gap)
     sessions = [(s, e) for s, e in sessions if e - s >= min_duration]
-    sessions = merge_office_sessions(sessions, cfg)
 
     # Group by date
     by_date = {}
-    for start, end, is_office in sessions:
-        by_date.setdefault(business_date(start, cfg), []).append((start, end, is_office))
+    for start, end in sessions:
+        by_date.setdefault(business_date(start, day_start), []).append((start, end))
 
     print(f"\nVoluntary interaction time  (ignoring gaps < {args.gap} min)\n")
 
@@ -759,13 +662,12 @@ def main():
         day_total = timedelta()
         date_str = date.strftime("%a, %b %-d")
         print(f"  {date_str}")
-        for start, end, is_office in day_sessions:
+        for start, end in day_sessions:
             dur = end - start
             day_total += dur
             start_str = start.strftime("%-I:%M %p")
             end_str   = end.strftime("%-I:%M %p")
-            loc_label = "  [Office]" if is_office else ""
-            print(f"    {start_str} - {end_str}  {fmt_duration(dur)}{loc_label}")
+            print(f"    {start_str} - {end_str}  {fmt_duration(dur)}")
             csv_rows.append({
                 "date":       date.isoformat(),
                 "start_time": start.strftime("%H:%M"),

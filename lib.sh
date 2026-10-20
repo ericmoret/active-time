@@ -39,9 +39,8 @@ keychain_item_exists() {
 }
 
 # read_existing_plist_config -> sets EXISTING_SHEET_ENABLED (0/1),
-# EXISTING_SHEET_ID, EXISTING_SHEET_TAB, EXISTING_OFFICE_DAYS,
-# EXISTING_OFFICE_START, EXISTING_OFFICE_END from whatever's already
-# installed at $PLIST_DST, so a re-run can offer to keep it instead of
+# EXISTING_SHEET_ID, EXISTING_SHEET_TAB from whatever's already installed
+# at $PLIST_DST, so a re-run can offer to keep it instead of
 # silently reverting to hardcoded defaults. No-op (keeps the caller's
 # existing values) if there's no plist there yet.
 read_existing_plist_config() {
@@ -55,9 +54,6 @@ with open(sys.argv[1], "rb") as f:
 flag_to_var = {
     "--sheet-id": "EXISTING_SHEET_ID",
     "--sheet-tab": "EXISTING_SHEET_TAB",
-    "--office-days": "EXISTING_OFFICE_DAYS",
-    "--office-start": "EXISTING_OFFICE_START",
-    "--office-end": "EXISTING_OFFICE_END",
 }
 out = {}
 for i, arg in enumerate(args):

@@ -27,9 +27,6 @@ echo
 EXISTING_SHEET_ENABLED=0
 EXISTING_SHEET_ID=""
 EXISTING_SHEET_TAB="CSV"
-EXISTING_OFFICE_DAYS="Tue,Wed,Thu"
-EXISTING_OFFICE_START="9:00"
-EXISTING_OFFICE_END="18:00"
 read_existing_plist_config
 
 # ---------------------------------------------------------------------------
@@ -138,31 +135,7 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# 4. Office days/hours
-# ---------------------------------------------------------------------------
-prompt_default OFFICE_DAYS "Days considered office days (comma-separated, e.g. Tue,Wed,Thu)" "$EXISTING_OFFICE_DAYS"
-prompt_default OFFICE_START "Office hours start time" "$EXISTING_OFFICE_START"
-prompt_default OFFICE_END "Office hours end time" "$EXISTING_OFFICE_END"
-
-if ! OFFICE_DAYS="$OFFICE_DAYS" OFFICE_START="$OFFICE_START" OFFICE_END="$OFFICE_END" BIN_DIR="$BIN_DIR" "$PYTHON_BIN" <<'PYEOF'
-import os, sys
-sys.path.insert(0, os.environ["BIN_DIR"])
-from active_time import parse_office_days, parse_time_of_day
-try:
-    parse_office_days(os.environ["OFFICE_DAYS"])
-    parse_time_of_day(os.environ["OFFICE_START"])
-    parse_time_of_day(os.environ["OFFICE_END"])
-except ValueError as e:
-    print(f"error: {e}", file=sys.stderr)
-    sys.exit(1)
-PYEOF
-then
-    exit 1
-fi
-echo
-
-# ---------------------------------------------------------------------------
-# 5. Render and install the launchd plist
+# 4. Render and install the launchd plist
 # ---------------------------------------------------------------------------
 sheet_args_xml=""
 for arg in "${SHEET_ARGS[@]}"; do
@@ -174,9 +147,6 @@ plist="${plist//@SHEET_ARGS@/$sheet_args_xml}"
 plist="${plist//@PYTHON@/$PYTHON_BIN}"
 plist="${plist//@SCRIPT@/$SCRIPT_DST}"
 plist="${plist//@CSV@/$CSV_DST}"
-plist="${plist//@OFFICE_DAYS@/$OFFICE_DAYS}"
-plist="${plist//@OFFICE_START@/$OFFICE_START}"
-plist="${plist//@OFFICE_END@/$OFFICE_END}"
 plist="${plist//@DATA_DIR@/$DATA_DIR}"
 plist="${plist//@LOG@/$LOG_DST}"
 printf '%s\n' "$plist" > "$PLIST_DST"
@@ -188,7 +158,7 @@ echo "Loaded into launchd (runs daily at 08:00, or ASAP after wake if missed)."
 echo
 
 # ---------------------------------------------------------------------------
-# 6. Summary
+# 5. Summary
 # ---------------------------------------------------------------------------
 echo "== Install complete =="
 echo "Script:   $SCRIPT_DST"
@@ -200,7 +170,6 @@ if [ "${#SHEET_ARGS[@]}" -gt 0 ]; then
 else
     echo "Sheet:    (not configured - local CSV only; re-run this installer to add it)"
 fi
-echo "Office:   $OFFICE_DAYS, $OFFICE_START-$OFFICE_END"
 echo
 echo "Test it now with:"
 echo "  \"$SCRIPT_DST\" --csv \"$CSV_DST\" ${SHEET_ARGS[*]}"
