@@ -115,11 +115,21 @@ Permanently clear all tracked history — local CSV and, with `--push-sheet`, th
 python3 active_time.py --reset --push-sheet --sheet-id YOUR_SHEET_ID --sheet-tab CSV
 ```
 
+By default each run also reads WindowServer's per-event keyboard/trackpad log from the macOS unified log (`log show`) for the same window, to pin down when input really happened (this adds a minute or two per run). Skip it and use the pmset log alone:
+
+```bash
+python3 active_time.py --no-unified-log
+```
+
 To capture a log snapshot for later/offline use:
 
 ```bash
 pmset -g log > my-pmset-snapshot.log
+log show --start "2026-10-12 00:00:00" > my-unified-snapshot.log   # optional
+python3 active_time.py my-pmset-snapshot.log --unified-log my-unified-snapshot.log
 ```
+
+The unified log only keeps about a week, so capture it alongside the pmset snapshot if you want both.
 
 A saved snapshot only reflects the machine it was captured on. If you're reprocessing history for real tracking/billing purposes (e.g. after a `--reset`), prefer the live log (no file argument) over an old saved snapshot, so you don't end up syncing stale or wrong-machine data into your CSV/Sheet.
 

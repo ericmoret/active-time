@@ -22,10 +22,16 @@ date/start_time. This makes it safe to run repeatedly (e.g. via a
 scheduled launchd job) against a pmset log whose window overlaps a
 previous run.
 
+Input timing is refined with WindowServer's per-event log from the macOS
+unified log (`log show`), when available - see combine_pulses(). Only
+timestamps are read from it. Pass --unified-log FILE to use a saved
+`log show` dump instead, or --no-unified-log to use pmset alone.
+
 To capture a fresh log:
     pmset -g log > pmset.log
 """
 
+import bisect
 import os
 import re
 import stat
@@ -97,6 +103,14 @@ def compute_intervals(events):
     (timestamp - duration). Using the raw TimedOut timestamp as the pulse
     inflates every session's end by however long that particular timeout
     happened to be (seen ranging from seconds to over an hour in practice).
+
+    The same goes for Summary heartbeats: their duration field is how long
+    the assertion had gone without a fresh HID tickle when the heartbeat was
+    logged, so (timestamp - duration) is the real last-input moment. Checked
+    against WindowServer's per-event log: e.g. a Summary at 08:28:48 with
+    duration 00:04:47 lines up with trackpad input at 08:24, not 08:28.
+    Using the raw Summary timestamp let 15-minute heartbeats stretch
+    sessions across idle stretches.
     """
     pulses = []
     for ts, etype, detail in events:
@@ -104,11 +118,128 @@ def compute_intervals(events):
             continue
         if not any(k in detail for k in HID_KEYS):
             continue
-        if "TimedOut" in detail:
+        if "TimedOut" in detail or "Summary" in detail:
             ts = ts - parse_event_duration(detail)
         pulses.append(ts)
 
     return sorted((ts, ts) for ts in pulses)
+
+
+# ---------------------------------------------------------------------------
+# Unified log (WindowServer input events)
+# ---------------------------------------------------------------------------
+
+# WindowServer logs one line per real input event it dispatches. These are
+# far denser than pmset's assertion events (which only appear on
+# create/15-minute heartbeat/timeout), so they pin down when input actually
+# happened. Only the timestamp of each matching line is kept - the message
+# text (which names the focused app's pid) is discarded unread.
+UNIFIED_INPUT_MARKERS = (
+    "for kCGSEventKeyDown",              # key press (incl. lock-screen password)
+    "Dispatching digitizer event",       # trackpad touch
+    "Dispatching pointer event",         # trackpad/mouse click
+    "processIndirectGesturesForEvent",   # trackpad scroll/swipe
+    "Posting gesture update",            # system gesture (Mission Control, etc.)
+)
+
+# Seen during pointer movement that the markers above don't log, but also
+# occasionally on its own from window layout changes - so it only
+# corroborates a pmset pulse (see combine_pulses), never stands alone.
+UNIFIED_HINT_MARKERS = (
+    "nodeCoordinatorDidUpdate",
+)
+
+UNIFIED_TS_PAT = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+([+-]\d{4})\s')
+
+# The sender column: "WindowServer[454]: " in --style syslog, "WindowServer: "
+# in the default style. Matching on the bare word isn't enough - a saved
+# dump also contains `log` logging its own invocations, predicate included.
+UNIFIED_SENDER_PAT = re.compile(r'\sWindowServer(?:\[\d+\])?: ')
+
+# How close a WindowServer event must be to a pmset pulse to vouch for it.
+CORROBORATION_WINDOW = timedelta(minutes=2)
+
+
+def unified_log_predicate():
+    clauses = " OR ".join(
+        f'eventMessage CONTAINS "{m}"' for m in UNIFIED_INPUT_MARKERS + UNIFIED_HINT_MARKERS
+    )
+    return f'process == "WindowServer" AND ({clauses})'
+
+
+def read_unified_log(start, end):
+    """Stream WindowServer input lines from the system log between start
+    and end (aware datetimes). Takes a minute or two for a week-long window.
+    The system only keeps roughly the last week, so older ranges come back
+    partly or wholly empty - combine_pulses() copes with that."""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    cmd = [
+        "/usr/bin/log", "show", "--style", "syslog",
+        "--start", start.astimezone().strftime(fmt),
+        "--end", end.astimezone().strftime(fmt),
+        "--predicate", unified_log_predicate(),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"log show exited {result.returncode}")
+    return result.stdout.splitlines()
+
+
+def parse_unified_events(lines):
+    """Return (input_times, hint_times), each a sorted list of aware
+    datetimes. Accepts `log show` output in its default or --style syslog
+    format, either live from read_unified_log() or a saved file (e.g.
+    `log show --last 1d > logshow.log`); non-WindowServer lines and
+    multi-line message continuations are skipped."""
+    inputs, hints = [], []
+    for line in lines:
+        if "WindowServer" not in line or not UNIFIED_SENDER_PAT.search(line):
+            continue
+        if any(m in line for m in UNIFIED_INPUT_MARKERS):
+            bucket = inputs
+        elif any(m in line for m in UNIFIED_HINT_MARKERS):
+            bucket = hints
+        else:
+            continue
+        m = UNIFIED_TS_PAT.match(line)
+        if not m:
+            continue
+        bucket.append(datetime.strptime(m.group(1) + " " + m.group(2), "%Y-%m-%d %H:%M:%S %z"))
+    return sorted(inputs), sorted(hints)
+
+
+def _has_event_near(sorted_times, ts, window):
+    i = bisect.bisect_left(sorted_times, ts - window)
+    return i < len(sorted_times) and sorted_times[i] <= ts + window
+
+
+def combine_pulses(pmset_intervals, input_times, hint_times):
+    """Merge pmset pulses with WindowServer input events.
+
+    Inside the span the unified log covers, a pmset pulse is kept only if
+    some WindowServer event (input or hint) falls within
+    CORROBORATION_WINDOW of it. That drops pulses with no real input behind
+    them - mostly lid-opens nobody followed up on, and the
+    kernel.useractive display tickle from pressing the power/Touch ID key
+    to put the machine to sleep. Every WindowServer input event becomes a
+    pulse of its own, filling in the stretches between pmset's sparse
+    heartbeats.
+
+    Outside that span (older than the system log keeps, or no unified log
+    at all) pmset pulses pass through unchanged.
+    """
+    if not input_times:
+        return pmset_intervals
+    lo = input_times[0] - CORROBORATION_WINDOW
+    hi = input_times[-1] + CORROBORATION_WINDOW
+    evidence = sorted(input_times + hint_times)
+
+    pulses = [
+        (ts, ts) for ts, _ in pmset_intervals
+        if not (lo <= ts <= hi) or _has_event_near(evidence, ts, CORROBORATION_WINDOW)
+    ]
+    pulses.extend((ts, ts) for ts in input_times)
+    return sorted(pulses)
 
 
 def merge_intervals(intervals, gap):
@@ -532,6 +663,12 @@ def main():
                         help="Office hours start time, e.g. 9:00 or 9am (default: 9:00)")
     parser.add_argument("--office-end", default="18:00",
                         help="Office hours end time, e.g. 18:00 or 6pm (default: 18:00)")
+    parser.add_argument("--unified-log", metavar="FILE", default=None,
+                        help="Read WindowServer input events from a saved `log show` "
+                             "output file instead of querying the system log")
+    parser.add_argument("--no-unified-log", action="store_true",
+                        help="Use the pmset log alone; skip WindowServer input events "
+                             "from the system log")
     parser.add_argument("--day-start", default="3:00",
                         help="Day boundary for grouping/reporting - activity before this "
                              "local time counts as the previous day (default: 3:00, i.e. "
@@ -588,6 +725,20 @@ def main():
     if not intervals:
         print("No UserIsActive HID events found in this log.")
         sys.exit(1)
+
+    if not args.no_unified_log:
+        try:
+            if args.unified_log:
+                with open(args.unified_log, errors="replace") as f:
+                    input_times, hint_times = parse_unified_events(f)
+            else:
+                print("Reading WindowServer input events from system log...", flush=True)
+                input_times, hint_times = parse_unified_events(
+                    read_unified_log(events[0][0], events[-1][0] + timedelta(minutes=1)))
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+            print(f"  Unified log unavailable ({e}); using pmset log alone.", file=sys.stderr)
+            input_times, hint_times = [], []
+        intervals = combine_pulses(intervals, input_times, hint_times)
 
     gap = timedelta(minutes=args.gap)
     min_duration = timedelta(minutes=args.min_duration)

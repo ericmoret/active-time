@@ -16,9 +16,10 @@ So instead of tracking hours by hand, this project read that log and built work 
 
 1. Read the log, either live (`pmset -g log`) or from a saved file.
 2. Filtered out background noise — wake-ups, notifications, video calls — and kept only real keyboard, trackpad, and lid events.
-3. Grouped nearby activity into sessions. A gap under 20 minutes (configurable) didn't count as a break.
-4. Wrote the result to a CSV, and optionally to a Google Sheet, so the data didn't depend on one laptop.
-5. Ran once a day on its own, using `launchd`, macOS's built-in scheduler.
+3. Cross-checked against WindowServer's per-keystroke/per-touch entries in the macOS unified log (`log show`), dropping power-log blips with no real input behind them (lid opened, then nothing) and filling in the gaps between the power log's coarse 15-minute heartbeats.
+4. Grouped nearby activity into sessions. A gap under 20 minutes (configurable) didn't count as a break.
+5. Wrote the result to a CSV, and optionally to a Google Sheet, so the data didn't depend on one laptop.
+6. Ran once a day on its own, using `launchd`, macOS's built-in scheduler.
 
 ## Output
 
@@ -36,13 +37,13 @@ A separate spreadsheet used that data to calculate daily and weekly totals and f
 
 ## Engineering notes
 
-- macOS logs when an activity window expires, not when the last real keystroke happened. The gap between those two could be minutes or over an hour, so the script had to subtract it out.
+- macOS logs when an activity window expires, not when the last real keystroke happened. The gap between those two could be minutes or over an hour, so the script had to subtract it out. The same applies to the 15-minute "still active" heartbeats: their timestamp is not the last input either.
 - A laptop that briefly slept and woke back up shouldn't have counted as the end of a session. Treating it that way discarded real activity.
 - Google Sheets changes how values are formatted when read back — for example, dropping a leading zero from a time. Comparing raw text missed this and created duplicate rows. Values had to be normalized before comparing.
 
 ## Privacy
 
-The log only records whether input happened, not what was typed or which apps were used. No keystrokes, no app names, no screenshots.
+The log only records whether input happened, not what was typed or which apps were used. No keystrokes, no app names, no screenshots. From the unified log, only the timestamps of input events are read; the rest of each line is discarded.
 
 ## Installation
 
